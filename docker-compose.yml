@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+      - MODELS_PATH=/app/data/models
+      - RESULTS_PATH=/app/data/results
+      - OPENSTUDIO_WORKING_DIR=/app/workspace
+      - OPENSTUDIO_PATH=/usr/local/openstudio-3.7.0
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - openstudio-simdata:/var/simdata/openstudio
+      - openstudio-models:/app/data/models
+      - openstudio-results:/app/data/results
+    ports:
+      - "3000:3000"
+      - "9229:9229"  # Node.js inspector
+    networks:
+      - openstudio-network
+    depends_on:
+      - redis
+  
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - openstudio-network
+    command: redis-server --appendonly yes
+
+  # Performance testing service
+  artillery:
+    image: artilleryio/artillery:latest
+    profiles: ["testing"]
+    volumes:
+      - ./tests/performance:/scripts
+    command: ["run", "/scripts/load-test.yml"]
+    networks:
+      - openstudio-network
+    depends_on:
+      - app
+
+networks:
+  openstudio-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
+  openstudio-simdata:
+    driver: local
+  openstudio-models:
+    driver: local
+  openstudio-results:
+    driver: local
