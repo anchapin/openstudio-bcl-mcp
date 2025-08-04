@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import { appConfig } from '../config';
 import { logger } from '../utils';
+import os from 'os';
+import fs from 'fs';
 
 const router = Router();
 
@@ -48,10 +50,10 @@ router.get('/ready', (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
   };
 
-  logger.debug('Readiness check requested', { 
-    requestId: req.id, 
-    isReady, 
-    checks 
+  logger.debug('Readiness check requested', {
+    requestId: req.id,
+    isReady,
+    checks,
   });
 
   res.status(status).json(readinessCheck);
@@ -84,7 +86,7 @@ router.get('/metrics', (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     uptime: {
       process: process.uptime(),
-      system: require('os').uptime(),
+      system: os.uptime(),
     },
     memory: {
       rss: Math.round((memUsage.rss / 1024 / 1024) * 100) / 100,
@@ -125,7 +127,10 @@ function checkOpenStudioCLI(): boolean {
     // For now, we'll assume it's available if the path is configured
     return !!appConfig.openStudio.cliPath;
   } catch (error) {
-    logger.warn('OpenStudio CLI check failed', error instanceof Error ? { error: error.message } : undefined);
+    logger.warn(
+      'OpenStudio CLI check failed',
+      error instanceof Error ? { error: error.message } : undefined
+    );
     return false;
   }
 }
@@ -135,7 +140,6 @@ function checkOpenStudioCLI(): boolean {
  */
 function checkStorageDirectories(): boolean {
   try {
-    const fs = require('fs');
     const paths = [
       appConfig.storage.modelsPath,
       appConfig.storage.resultsPath,
@@ -153,7 +157,10 @@ function checkStorageDirectories(): boolean {
     }
     return true;
   } catch (error) {
-    logger.warn('Storage directory check failed', error instanceof Error ? { error: error.message } : undefined);
+    logger.warn(
+      'Storage directory check failed',
+      error instanceof Error ? { error: error.message } : undefined
+    );
     return false;
   }
 }

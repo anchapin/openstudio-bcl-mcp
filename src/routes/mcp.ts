@@ -25,14 +25,6 @@ router.get('/tools', async (req: Request, res: Response) => {
   try {
     logger.info('MCP tools list requested', { requestId: req.id });
 
-    // Create a mock list tools request
-    const listToolsRequest = {
-      jsonrpc: '2.0',
-      id: req.id,
-      method: 'tools/list',
-      params: {},
-    };
-
     // This would normally go through the MCP server's handler
     // For now, we'll return the static list of tools
     const tools = [
@@ -191,34 +183,53 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
       throw new ValidationError(`Unknown tool: ${toolName}`);
     }
 
-    // Create MCP call tool request
-    const callToolRequest = {
-      jsonrpc: '2.0',
-      id: req.id,
-      method: 'tools/call',
-      params: {
-        name: toolName,
-        arguments: toolArgs,
-      },
-    };
-
     // Execute the tool using the MCP server's internal handler
-    let result;
+    let result: { content: Array<{ type: string; text: string }> };
     switch (toolName) {
       case 'create_energy_model':
-        result = await (mcpServer as any).handleCreateEnergyModel(toolArgs);
+        result = await (
+          mcpServer as unknown as {
+            handleCreateEnergyModel: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleCreateEnergyModel(toolArgs);
         break;
       case 'run_energy_simulation':
-        result = await (mcpServer as any).handleRunEnergySimulation(toolArgs);
+        result = await (
+          mcpServer as unknown as {
+            handleRunEnergySimulation: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleRunEnergySimulation(toolArgs);
         break;
       case 'validate_model_ashrae':
-        result = await (mcpServer as any).handleValidateModelAshrae(toolArgs);
+        result = await (
+          mcpServer as unknown as {
+            handleValidateModelAshrae: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleValidateModelAshrae(toolArgs);
         break;
       case 'export_to_radiance':
-        result = await (mcpServer as any).handleExportToRadiance(toolArgs);
+        result = await (
+          mcpServer as unknown as {
+            handleExportToRadiance: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleExportToRadiance(toolArgs);
         break;
       case 'get_simulation_results':
-        result = await (mcpServer as any).handleGetSimulationResults(toolArgs);
+        result = await (
+          mcpServer as unknown as {
+            handleGetSimulationResults: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleGetSimulationResults(toolArgs);
         break;
       default:
         throw new ValidationError(`Tool ${toolName} not implemented`);
@@ -247,7 +258,7 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
 router.post('/request', async (req: Request, res: Response) => {
   try {
     const validation = safeValidate(mcpRequestSchema, req.body);
-    
+
     if (!validation.success) {
       throw new ValidationError('Invalid MCP request format', validation.error.flatten());
     }
@@ -273,7 +284,10 @@ router.post('/request', async (req: Request, res: Response) => {
         if (!params?.name || typeof params.name !== 'string') {
           throw new ValidationError('Tool name is required for tools/call');
         }
-        result = await handleToolCall(params.name, (params.arguments as Record<string, unknown>) || {});
+        result = await handleToolCall(
+          params.name,
+          (params.arguments as Record<string, unknown>) || {}
+        );
         break;
       default:
         throw new MCPProtocolError(`Unsupported MCP method: ${method}`);
@@ -288,10 +302,13 @@ router.post('/request', async (req: Request, res: Response) => {
     logger.error('Error processing MCP request', error instanceof Error ? error : undefined, {
       requestId: req.id,
     });
-    
+
     // Return MCP-compliant error response
-    const mcpError = error instanceof MCPProtocolError ? error : new MCPProtocolError((error as Error)?.message || 'Unknown error');
-    
+    const mcpError =
+      error instanceof MCPProtocolError
+        ? error
+        : new MCPProtocolError((error as Error)?.message || 'Unknown error');
+
     res.status(400).json({
       jsonrpc: '2.0',
       id: req.body?.id || req.id,
@@ -306,7 +323,7 @@ router.post('/request', async (req: Request, res: Response) => {
 /**
  * Helper function to handle tools/list method
  */
-async function handleToolsList() {
+async function handleToolsList(): Promise<{ tools: Array<{ name: string; description: string }> }> {
   // This would normally call the MCP server's list tools handler
   // For now, return the static list
   return {
@@ -338,18 +355,51 @@ async function handleToolsList() {
 /**
  * Helper function to handle tools/call method
  */
-async function handleToolCall(toolName: string, args: Record<string, unknown>) {
+async function handleToolCall(
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (toolName) {
     case 'create_energy_model':
-      return await (mcpServer as any).handleCreateEnergyModel(args);
+      return await (
+        mcpServer as unknown as {
+          handleCreateEnergyModel: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleCreateEnergyModel(args);
     case 'run_energy_simulation':
-      return await (mcpServer as any).handleRunEnergySimulation(args);
+      return await (
+        mcpServer as unknown as {
+          handleRunEnergySimulation: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleRunEnergySimulation(args);
     case 'validate_model_ashrae':
-      return await (mcpServer as any).handleValidateModelAshrae(args);
+      return await (
+        mcpServer as unknown as {
+          handleValidateModelAshrae: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleValidateModelAshrae(args);
     case 'export_to_radiance':
-      return await (mcpServer as any).handleExportToRadiance(args);
+      return await (
+        mcpServer as unknown as {
+          handleExportToRadiance: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleExportToRadiance(args);
     case 'get_simulation_results':
-      return await (mcpServer as any).handleGetSimulationResults(args);
+      return await (
+        mcpServer as unknown as {
+          handleGetSimulationResults: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleGetSimulationResults(args);
     default:
       throw new ValidationError(`Unknown tool: ${toolName}`);
   }

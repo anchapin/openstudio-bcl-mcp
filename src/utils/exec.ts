@@ -3,7 +3,7 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs/promises';
 import { logger } from './logger';
-import { AppError, NotFoundError, FileSystemError } from './errors';
+import { AppError, NotFoundError } from './errors';
 import { ensureDirectory } from './index';
 
 const execPromise = promisify(exec);
@@ -19,7 +19,7 @@ export async function executeCommand(
   options: { cwd?: string; timeout?: number } = {}
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   logger.debug('Executing command', { command, options });
-  
+
   try {
     const timeout = options.timeout || 300000; // 5 minutes default timeout
     const result = await execPromise(command, {
@@ -27,24 +27,25 @@ export async function executeCommand(
       timeout,
       maxBuffer: 1024 * 1024 * 10, // 10MB buffer
     });
-    
+
     return {
       stdout: result.stdout,
       stderr: result.stderr,
       code: 0,
     };
-  } catch (error: any) {
-    logger.error('Command execution failed', error, {
+  } catch (error: unknown) {
+    const execError = error as { stdout?: string; stderr?: string; code?: number };
+    logger.error('Command execution failed', error instanceof Error ? error : undefined, {
       command,
-      stdout: error.stdout || '',
-      stderr: error.stderr || '',
-      code: error.code || 1,
+      stdout: execError.stdout || '',
+      stderr: execError.stderr || '',
+      code: execError.code || 1,
     });
-    
+
     return {
-      stdout: error.stdout || '',
-      stderr: error.stderr || error.message,
-      code: error.code || 1,
+      stdout: execError.stdout || '',
+      stderr: execError.stderr || (error instanceof Error ? error.message : ''),
+      code: execError.code || 1,
     };
   }
 }
@@ -62,12 +63,12 @@ export async function executeOpenStudioCommand(
   // Get OpenStudio path from environment or use default
   const openStudioPath = process.env.OPENSTUDIO_PATH || '/usr/local/openstudio';
   const openStudioBin = path.join(openStudioPath, 'bin', 'openstudio');
-  
+
   // Ensure working directory exists
   if (options.cwd) {
     await ensureDirectory(options.cwd);
   }
-  
+
   const command = `${openStudioBin} ${args.join(' ')}`;
   return executeCommand(command, options);
 }
@@ -85,23 +86,28 @@ export async function createOpenStudioModel(params: {
   outputPath: string;
 }): Promise<{ modelId: string; path: string }> {
   const { buildingType, location, floorArea, description, outputPath } = params;
-  
+
   // Ensure output directory exists
   await ensureDirectory(path.dirname(outputPath));
-  
+
   // Create a simple OpenStudio model using CLI
   // In a real implementation, this would use more sophisticated OpenStudio measures
   const args = [
     'create_model',
-    '--building-type', buildingType,
-    '--location', location,
-    '--floor-area', floorArea.toString(),
-    '--description', `"${description}"`,
-    '--output', outputPath
+    '--building-type',
+    buildingType,
+    '--location',
+    location,
+    '--floor-area',
+    floorArea.toString(),
+    '--description',
+    `"${description}"`,
+    '--output',
+    outputPath,
   ];
-  
+
   const result = await executeOpenStudioCommand(args);
-  
+
   if (result.code !== 0) {
     throw new AppError(
       `Failed to create OpenStudio model: ${result.stderr}`,
@@ -110,10 +116,10 @@ export async function createOpenStudioModel(params: {
       'OPENSTUDIO_ERROR'
     );
   }
-  
+
   // Extract model ID from output path
   const modelId = path.basename(outputPath, '.osm');
-  
+
   return {
     modelId,
     path: outputPath,
@@ -133,40 +139,35 @@ export async function runEnergySimulation(params: {
   outputDir: string;
 }): Promise<{ jobId: string; status: string; outputPath: string }> {
   const { modelPath, weatherPath, outputDir } = params;
-  
+
   // Ensure output directory exists
   await ensureDirectory(outputDir);
-  
+
   // Check if model file exists
   try {
     await fs.access(modelPath);
   } catch (error) {
     throw new NotFoundError('Model file', modelPath);
   }
-  
+
   // Build command arguments
   const args = ['run_simulation', modelPath];
-  
+
   if (weatherPath) {
     args.push('--weather-file', weatherPath);
   }
-  
+
   args.push('--output-directory', outputDir);
-  
+
   const result = await executeOpenStudioCommand(args, { cwd: outputDir });
-  
+
   if (result.code !== 0) {
-    throw new AppError(
-      `Energy simulation failed: ${result.stderr}`,
-      500,
-      true,
-      'SIMULATION_ERROR'
-    );
+    throw new AppError(`Energy simulation failed: ${result.stderr}`, 500, true, 'SIMULATION_ERROR');
   }
-  
+
   // Extract job ID from output directory
   const jobId = path.basename(outputDir);
-  
+
   return {
     jobId,
     status: 'completed',
@@ -185,37 +186,27 @@ export async function validateModelASHRAE(params: {
   standard: string;
 }): Promise<{ compliant: boolean; report: string }> {
   const { modelPath, standard } = params;
-  
+
   // Check if model file exists
   try {
     await fs.access(modelPath);
   } catch (error) {
     throw new NotFoundError('Model file', modelPath);
   }
-  
+
   // Run validation command
-  const args = [
-    'validate_model',
-    '--model', modelPath,
-    '--standard', standard,
-    '--format', 'json'
-  ];
-  
+  const args = ['validate_model', '--model', modelPath, '--standard', standard, '--format', 'json'];
+
   const result = await executeOpenStudioCommand(args);
-  
+
   if (result.code !== 0) {
-    throw new AppError(
-      `Model validation failed: ${result.stderr}`,
-      500,
-      true,
-      'VALIDATION_ERROR'
-    );
+    throw new AppError(`Model validation failed: ${result.stderr}`, 500, true, 'VALIDATION_ERROR');
   }
-  
+
   // Parse validation output (simplified)
   const compliant = !result.stderr.includes('ERROR') && !result.stderr.includes('FAIL');
   const report = result.stdout || 'Validation completed successfully';
-  
+
   return {
     compliant,
     report,
@@ -236,39 +227,34 @@ export async function exportToRadiance(params: {
   materialProperties?: boolean;
 }): Promise<{ exported: boolean; path: string }> {
   const { modelPath, outputPath, includeWindows = true, materialProperties = true } = params;
-  
+
   // Check if model file exists
   try {
     await fs.access(modelPath);
   } catch (error) {
     throw new NotFoundError('Model file', modelPath);
   }
-  
+
   // Ensure output directory exists
   await ensureDirectory(path.dirname(outputPath));
-  
+
   // Build export command
   const args = ['export_radiance', modelPath, '--output', outputPath];
-  
+
   if (includeWindows) {
     args.push('--include-windows');
   }
-  
+
   if (materialProperties) {
     args.push('--include-materials');
   }
-  
+
   const result = await executeOpenStudioCommand(args);
-  
+
   if (result.code !== 0) {
-    throw new AppError(
-      `Radiance export failed: ${result.stderr}`,
-      500,
-      true,
-      'EXPORT_ERROR'
-    );
+    throw new AppError(`Radiance export failed: ${result.stderr}`, 500, true, 'EXPORT_ERROR');
   }
-  
+
   return {
     exported: true,
     path: outputPath,
@@ -287,15 +273,15 @@ export async function getSimulationResults(params: {
   format: string;
   resultsDir: string;
 }): Promise<{ content: string; format: string }> {
-  const { jobId, format, resultsDir } = params;
-  
+  const { jobId: _jobId, format, resultsDir } = params;
+
   // Check if results directory exists
   try {
     await fs.access(resultsDir);
   } catch (error) {
     throw new NotFoundError('Results directory', resultsDir);
   }
-  
+
   // Determine result file based on format
   let resultFile: string;
   switch (format.toLowerCase()) {
@@ -311,17 +297,17 @@ export async function getSimulationResults(params: {
     default:
       resultFile = path.join(resultsDir, 'results.json');
   }
-  
+
   // Check if result file exists
   try {
     await fs.access(resultFile);
   } catch (error) {
     throw new NotFoundError('Result file', resultFile);
   }
-  
+
   // Read the result file
   const content = await fs.readFile(resultFile, 'utf-8');
-  
+
   return {
     content,
     format,

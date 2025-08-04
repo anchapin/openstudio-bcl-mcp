@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils';
 import { ValidationError, NotFoundError } from '../utils/errors';
 import { safeValidate, createModelRequestSchema, paginationSchema } from '../utils/validation';
-import type { EnergyModel, CreateModelRequest, PaginatedResponse } from '../types';
+import type { EnergyModel, PaginatedResponse } from '../types';
 
 const router = Router();
 
@@ -26,11 +26,14 @@ router.get('/', async (req: Request, res: Response) => {
       sortBy: req.query.sortBy as string | undefined,
       sortOrder: (req.query.sortOrder as string) || 'asc',
     };
-    
+
     const paginationValidation = safeValidate(paginationSchema, paginationData);
 
     if (!paginationValidation.success) {
-      throw new ValidationError('Invalid pagination parameters', paginationValidation.error.flatten());
+      throw new ValidationError(
+        'Invalid pagination parameters',
+        paginationValidation.error.flatten()
+      );
     }
 
     const { page, limit, sortBy, sortOrder } = paginationValidation.data;
@@ -40,16 +43,18 @@ router.get('/', async (req: Request, res: Response) => {
     const safeLimit = limit ?? 20;
 
     // Get all models
-    let modelsList = Array.from(models.values());
+    const modelsList = Array.from(models.values());
 
     // Apply sorting
     if (sortBy) {
       modelsList.sort((a, b) => {
-        const aValue = (a as any)[sortBy];
-        const bValue = (b as any)[sortBy];
-        
-        if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
-        if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+        const aValue = a[sortBy as keyof typeof a];
+        const bValue = b[sortBy as keyof typeof b];
+
+        if (aValue !== undefined && bValue !== undefined) {
+          if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+          if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+        }
         return 0;
       });
     }
@@ -86,11 +91,11 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Model ID is required');
     }
-    
+
     logger.info('Model details requested', { requestId: req.id, modelId: id });
 
     const model = models.get(id);
@@ -127,7 +132,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Create new model
     const modelId = uuidv4();
     const now = new Date();
-    
+
     const newModel: EnergyModel = {
       id: modelId,
       name: modelRequest.name,
@@ -170,11 +175,11 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Model ID is required');
     }
-    
+
     logger.info('Model update requested', { requestId: req.id, modelId: id, body: req.body });
 
     const existingModel = models.get(id);
@@ -230,11 +235,11 @@ router.put('/:id', async (req: Request, res: Response) => {
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Model ID is required');
     }
-    
+
     logger.info('Model deletion requested', { requestId: req.id, modelId: id });
 
     const existingModel = models.get(id);
@@ -268,11 +273,11 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.get('/:id/metadata', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Model ID is required');
     }
-    
+
     logger.info('Model metadata requested', { requestId: req.id, modelId: id });
 
     const model = models.get(id);
@@ -303,12 +308,16 @@ router.get('/:id/metadata', async (req: Request, res: Response) => {
 router.patch('/:id/metadata', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Model ID is required');
     }
-    
-    logger.info('Model metadata update requested', { requestId: req.id, modelId: id, body: req.body });
+
+    logger.info('Model metadata update requested', {
+      requestId: req.id,
+      modelId: id,
+      body: req.body,
+    });
 
     const existingModel = models.get(id);
     if (!existingModel) {
@@ -336,7 +345,7 @@ router.patch('/:id/metadata', async (req: Request, res: Response) => {
       ...existingModel.metadata,
       ...metadataUpdates,
     };
-    
+
     const updatedModel: EnergyModel = {
       ...existingModel,
       metadata: updatedMetadata,

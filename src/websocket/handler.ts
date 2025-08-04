@@ -43,35 +43,35 @@ export function webSocketHandler(io: SocketIOServer): void {
     connectedClients.set(clientId, socket);
 
     // Handle client authentication (optional)
-    socket.on('authenticate', (data) => {
+    socket.on('authenticate', data => {
       handleAuthentication(socket, data);
     });
 
     // Handle MCP protocol messages
-    socket.on('mcp:request', (data) => {
+    socket.on('mcp:request', data => {
       handleMCPRequest(socket, data);
     });
 
     // Handle simulation progress subscriptions
-    socket.on('simulation:subscribe', (data) => {
+    socket.on('simulation:subscribe', data => {
       handleSimulationSubscribe(socket, data);
     });
 
-    socket.on('simulation:unsubscribe', (data) => {
+    socket.on('simulation:unsubscribe', data => {
       handleSimulationUnsubscribe(socket, data);
     });
 
     // Handle model change subscriptions
-    socket.on('model:subscribe', (data) => {
+    socket.on('model:subscribe', data => {
       handleModelSubscribe(socket, data);
     });
 
-    socket.on('model:unsubscribe', (data) => {
+    socket.on('model:unsubscribe', data => {
       handleModelUnsubscribe(socket, data);
     });
 
     // Handle real-time tool execution
-    socket.on('tool:execute', (data) => {
+    socket.on('tool:execute', data => {
       handleToolExecution(socket, data);
     });
 
@@ -81,12 +81,12 @@ export function webSocketHandler(io: SocketIOServer): void {
     });
 
     // Handle generic messages
-    socket.on('message', (data) => {
+    socket.on('message', data => {
       handleGenericMessage(socket, data);
     });
 
     // Handle client disconnect
-    socket.on('disconnect', (reason) => {
+    socket.on('disconnect', reason => {
       logger.info('WebSocket client disconnected', {
         clientId,
         reason,
@@ -98,7 +98,7 @@ export function webSocketHandler(io: SocketIOServer): void {
     });
 
     // Handle connection errors
-    socket.on('error', (error) => {
+    socket.on('error', error => {
       logger.error('WebSocket client error', error, {
         clientId,
         clientIP,
@@ -115,7 +115,7 @@ export function webSocketHandler(io: SocketIOServer): void {
   });
 
   // Handle server-level errors
-  io.on('error', (error) => {
+  io.on('error', error => {
     logger.error('WebSocket server error', error);
   });
 }
@@ -162,7 +162,7 @@ function handleMCPRequest(socket: Socket, data: unknown): void {
       throw new ValidationError('Invalid MCP request format', validation.error.flatten());
     }
 
-    const { jsonrpc, id, method, params } = validation.data;
+    const { id, method, params } = validation.data;
 
     logger.info('MCP WebSocket request received', {
       clientId: socket.id,
@@ -187,11 +187,14 @@ function handleMCPRequest(socket: Socket, data: unknown): void {
       clientId: socket.id,
     });
 
-    const mcpError = error instanceof MCPProtocolError ? error : new MCPProtocolError((error as Error)?.message || 'Unknown error');
-    
+    const mcpError =
+      error instanceof MCPProtocolError
+        ? error
+        : new MCPProtocolError((error as Error)?.message || 'Unknown error');
+
     socket.emit('mcp:error', {
       jsonrpc: '2.0',
-      id: (data as any)?.id || 'unknown',
+      id: (data as { id?: string })?.id || 'unknown',
       error: {
         code: mcpError.mcpErrorCode,
         message: mcpError.message,
@@ -238,9 +241,13 @@ function handleSimulationSubscribe(socket: Socket, data: unknown): void {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error('Error handling simulation subscription', error instanceof Error ? error : undefined, {
-      clientId: socket.id,
-    });
+    logger.error(
+      'Error handling simulation subscription',
+      error instanceof Error ? error : undefined,
+      {
+        clientId: socket.id,
+      }
+    );
 
     socket.emit('simulation:error', {
       error: error instanceof Error ? error.message : 'Subscription failed',
@@ -278,9 +285,13 @@ function handleSimulationUnsubscribe(socket: Socket, data: unknown): void {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error('Error handling simulation unsubscribe', error instanceof Error ? error : undefined, {
-      clientId: socket.id,
-    });
+    logger.error(
+      'Error handling simulation unsubscribe',
+      error instanceof Error ? error : undefined,
+      {
+        clientId: socket.id,
+      }
+    );
   }
 }
 
@@ -474,7 +485,7 @@ function handleMCPToolsList(socket: Socket, requestId: string): void {
 /**
  * Handle MCP tool call request
  */
-function handleMCPToolCall(socket: Socket, requestId: string, params: unknown): void {
+function handleMCPToolCall(socket: Socket, requestId: string, _params: unknown): void {
   // This would integrate with the actual MCP server tool handlers
   // For now, send a mock response
   socket.emit('mcp:response', {
@@ -503,10 +514,10 @@ async function executeToolWithProgress(
   try {
     // Send progress updates
     const progressSteps = [10, 30, 50, 70, 90, 100];
-    
+
     for (const progress of progressSteps) {
       await new Promise(resolve => setTimeout(resolve, 500)); // Simulate work
-      
+
       socket.emit('tool:progress', {
         requestId,
         toolName,

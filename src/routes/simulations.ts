@@ -1,5 +1,4 @@
 import { Router, type Request, type Response } from 'express';
-import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils';
 import { ValidationError, NotFoundError } from '../utils/errors';
@@ -26,11 +25,14 @@ router.get('/', async (req: Request, res: Response) => {
       sortBy: req.query.sortBy as string | undefined,
       sortOrder: (req.query.sortOrder as string) || 'desc', // Default to newest first
     };
-    
+
     const paginationValidation = safeValidate(paginationSchema, paginationData);
 
     if (!paginationValidation.success) {
-      throw new ValidationError('Invalid pagination parameters', paginationValidation.error.flatten());
+      throw new ValidationError(
+        'Invalid pagination parameters',
+        paginationValidation.error.flatten()
+      );
     }
 
     const { page, limit, sortBy, sortOrder } = paginationValidation.data;
@@ -56,11 +58,13 @@ router.get('/', async (req: Request, res: Response) => {
     // Apply sorting
     if (sortBy) {
       jobsList.sort((a, b) => {
-        const aValue = (a as any)[sortBy];
-        const bValue = (b as any)[sortBy];
-        
-        if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
-        if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+        const aValue = a[sortBy as keyof typeof a];
+        const bValue = b[sortBy as keyof typeof b];
+
+        if (aValue !== undefined && bValue !== undefined) {
+          if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+          if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+        }
         return 0;
       });
     } else {
@@ -104,11 +108,11 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Simulation job ID is required');
     }
-    
+
     logger.info('Simulation job details requested', { requestId: req.id, jobId: id });
 
     const job = simulationJobs.get(id);
@@ -145,7 +149,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Create new simulation job
     const jobId = uuidv4();
     const now = new Date();
-    
+
     const newJob: SimulationJob = {
       id: jobId,
       modelId: simulationRequest.modelId,
@@ -184,11 +188,11 @@ router.post('/', async (req: Request, res: Response) => {
 router.post('/:id/cancel', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Simulation job ID is required');
     }
-    
+
     logger.info('Simulation job cancellation requested', { requestId: req.id, jobId: id });
 
     const job = simulationJobs.get(id);
@@ -231,12 +235,12 @@ router.post('/:id/cancel', async (req: Request, res: Response) => {
 router.get('/:id/results', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const format = req.query.format as string || 'json';
-    
+    const format = (req.query.format as string) || 'json';
+
     if (!id) {
       throw new ValidationError('Simulation job ID is required');
     }
-    
+
     logger.info('Simulation results requested', { requestId: req.id, jobId: id, format });
 
     const job = simulationJobs.get(id);
@@ -274,10 +278,14 @@ router.get('/:id/results', async (req: Request, res: Response) => {
         break;
     }
   } catch (error) {
-    logger.error('Error retrieving simulation results', error instanceof Error ? error : undefined, {
-      requestId: req.id,
-      jobId: req.params.id,
-    });
+    logger.error(
+      'Error retrieving simulation results',
+      error instanceof Error ? error : undefined,
+      {
+        requestId: req.id,
+        jobId: req.params.id,
+      }
+    );
     throw error;
   }
 });
@@ -289,11 +297,11 @@ router.get('/:id/results', async (req: Request, res: Response) => {
 router.get('/:id/status', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Simulation job ID is required');
     }
-    
+
     logger.info('Simulation status requested', { requestId: req.id, jobId: id });
 
     const job = simulationJobs.get(id);
@@ -325,11 +333,11 @@ router.get('/:id/status', async (req: Request, res: Response) => {
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     if (!id) {
       throw new ValidationError('Simulation job ID is required');
     }
-    
+
     logger.info('Simulation job deletion requested', { requestId: req.id, jobId: id });
 
     const job = simulationJobs.get(id);
@@ -372,7 +380,7 @@ async function runSimulation(jobId: string, request: RunSimulationRequest): Prom
       await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
       const currentJob = simulationJobs.get(jobId);
       if (currentJob?.status === 'cancelled') return;
-      
+
       simulationJobs.set(jobId, { ...job, status: 'running', progress });
     }
 
@@ -422,7 +430,7 @@ async function runSimulation(jobId: string, request: RunSimulationRequest): Prom
     };
 
     simulationJobs.set(jobId, completedJob);
-    
+
     logger.info('Simulation completed successfully', {
       jobId,
       modelId: request.modelId,
@@ -438,7 +446,7 @@ async function runSimulation(jobId: string, request: RunSimulationRequest): Prom
     };
 
     simulationJobs.set(jobId, failedJob);
-    
+
     logger.error('Simulation failed', error instanceof Error ? error : undefined, {
       jobId,
       modelId: request.modelId,
@@ -449,7 +457,7 @@ async function runSimulation(jobId: string, request: RunSimulationRequest): Prom
 /**
  * Convert simulation results to CSV format
  */
-function convertResultsToCSV(results: any): string {
+function convertResultsToCSV(results: import('../types').SimulationResults): string {
   const lines = [];
   lines.push('Metric,Value,Unit');
   lines.push(`Total Energy Use,${results.energyUse.totalEnergyUse},kWh/m²/year`);
@@ -465,7 +473,7 @@ function convertResultsToCSV(results: any): string {
 /**
  * Convert simulation results to HTML format
  */
-function convertResultsToHTML(results: any): string {
+function convertResultsToHTML(results: import('../types').SimulationResults): string {
   return `
     <!DOCTYPE html>
     <html>

@@ -8,12 +8,7 @@ import { RateLimiterMemory } from 'rate-limiter-flexible';
 
 import { appConfig } from './config';
 import { logger } from './utils';
-import {
-  AppError,
-  getErrorStatusCode,
-  formatErrorResponse,
-  isOperationalError,
-} from './utils/errors';
+import { getErrorStatusCode, formatErrorResponse } from './utils/errors';
 import { healthRouter } from './routes/health';
 import { mcpRouter } from './routes/mcp';
 import { modelsRouter } from './routes/models';
@@ -59,37 +54,43 @@ export class ExpressServer {
    */
   private setupMiddleware(): void {
     // Security middleware
-    this.app.use(helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          scriptSrc: ["'self'"],
-          connectSrc: ["'self'", 'ws:', 'wss:'],
+    this.app.use(
+      helmet({
+        contentSecurityPolicy: {
+          directives: {
+            defaultSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            scriptSrc: ["'self'"],
+            connectSrc: ["'self'", 'ws:', 'wss:'],
+          },
         },
-      },
-      crossOriginEmbedderPolicy: false,
-    }));
+        crossOriginEmbedderPolicy: false,
+      })
+    );
 
     // CORS middleware
-    this.app.use(cors({
-      origin: this.config.cors.origin,
-      credentials: this.config.cors.credentials,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    }));
+    this.app.use(
+      cors({
+        origin: this.config.cors.origin,
+        credentials: this.config.cors.credentials,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+      })
+    );
 
     // Compression middleware
-    this.app.use(compression({
-      filter: (req: Request, res: Response) => {
-        if (req.headers['x-no-compression']) {
-          return false;
-        }
-        return compression.filter(req, res);
-      },
-      level: 6,
-      threshold: 1024,
-    }));
+    this.app.use(
+      compression({
+        filter: (req: Request, res: Response) => {
+          if (req.headers['x-no-compression']) {
+            return false;
+          }
+          return compression.filter(req, res);
+        },
+        level: 6,
+        threshold: 1024,
+      })
+    );
 
     // Request parsing middleware
     this.app.use(express.json({ limit: '10mb' }));
@@ -114,10 +115,10 @@ export class ExpressServer {
 
     // API routes with versioning
     const apiRouter = express.Router();
-    
+
     // MCP protocol routes
     apiRouter.use('/mcp', mcpRouter);
-    
+
     // RESTful API routes
     apiRouter.use('/models', modelsRouter);
     apiRouter.use('/simulations', simulationsRouter);
@@ -216,9 +217,10 @@ export class ExpressServer {
     try {
       await this.rateLimiter.consume(req.ip || 'default');
       next();
-    } catch (rateLimiterRes: any) {
-      const remainingPoints = rateLimiterRes?.remainingPoints || 0;
-      const msBeforeNext = rateLimiterRes?.msBeforeNext || 0;
+    } catch (rateLimiterRes: unknown) {
+      const rateLimitError = rateLimiterRes as { remainingPoints?: number; msBeforeNext?: number };
+      const remainingPoints = rateLimitError?.remainingPoints || 0;
+      const msBeforeNext = rateLimitError?.msBeforeNext || 0;
 
       res.set({
         'Retry-After': Math.round(msBeforeNext / 1000) || 1,
@@ -240,7 +242,8 @@ export class ExpressServer {
    * Request ID middleware
    */
   private requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {
-    const requestId = req.get('X-Request-ID') || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const requestId =
+      req.get('X-Request-ID') || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     req.id = requestId;
     res.set('X-Request-ID', requestId);
     next();
@@ -249,12 +252,7 @@ export class ExpressServer {
   /**
    * Global error handling middleware
    */
-  private errorHandler(
-    error: Error,
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): void {
+  private errorHandler(error: Error, req: Request, res: Response, next: NextFunction): void {
     // If response already sent, delegate to default Express error handler
     if (res.headersSent) {
       return next(error);
@@ -337,7 +335,7 @@ export class ExpressServer {
       });
 
       // Close HTTP server
-      this.httpServer.close((error) => {
+      this.httpServer.close(error => {
         if (error) {
           logger.error('Error stopping Express server', error);
           reject(error);
@@ -397,11 +395,9 @@ export class ExpressServer {
 }
 
 // Add request ID to Express Request interface
-declare global {
-  namespace Express {
-    interface Request {
-      id: string;
-    }
+declare module 'express-serve-static-core' {
+  interface Request {
+    id: string;
   }
 }
 
