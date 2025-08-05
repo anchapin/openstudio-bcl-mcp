@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { executeCommand, executeOpenStudioCommand, validateAndResolvePath } from '../../src/utils/exec';
+import { describe, it, expect } from 'vitest';
+import { validateAndResolvePath } from '../../src/utils/exec';
 import { AppError } from '../../src/utils/errors';
 import * as path from 'path';
 
@@ -27,6 +27,36 @@ describe('Exec Utilities', () => {
         const inputPath = '/etc/passwd';
         validateAndResolvePath(inputPath, basePath);
       }).toThrow(AppError);
+    });
+
+    it('should throw error for nested path traversal attempts', () => {
+      expect(() => {
+        const basePath = path.resolve('/home/user/project/data/models');
+        const inputPath = path.resolve('/home/user/project/data/models/../../../etc/passwd');
+        validateAndResolvePath(inputPath, basePath);
+      }).toThrow(AppError);
+    });
+
+    it('should throw error for complex path traversal with encoding', () => {
+      expect(() => {
+        const basePath = path.resolve('/home/user/project/data/models');
+        const inputPath = path.resolve('/home/user/project/data/models/.././../etc/passwd');
+        validateAndResolvePath(inputPath, basePath);
+      }).toThrow(AppError);
+    });
+
+    it('should resolve paths with valid subdirectories', () => {
+      const basePath = path.resolve('/home/user/project/data/models');
+      const inputPath = path.resolve('/home/user/project/data/models/subdir/test.osm');
+      const result = validateAndResolvePath(inputPath, basePath);
+      expect(result).toBe(inputPath);
+    });
+
+    it('should handle relative paths correctly', () => {
+      const basePath = path.resolve('/home/user/project/data/models');
+      const inputPath = 'test.osm';
+      const result = validateAndResolvePath(inputPath, basePath);
+      expect(result).toBe(path.resolve('/home/user/project/data/models/test.osm'));
     });
   });
 

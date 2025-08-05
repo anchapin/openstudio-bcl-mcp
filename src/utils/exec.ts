@@ -9,9 +9,49 @@ import { ensureDirectory } from './index';
 const execPromise = promisify(exec);
 
 // Simple in-memory cache for CLI command results
-const commandCache = new Map<string, { stdout: string; stderr: string; code: number | null; timestamp: number }>();
+const commandCache = new Map<
+  string,
+  { stdout: string; stderr: string; code: number | null; timestamp: number }
+>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
 const MAX_CACHE_SIZE = 100; // Maximum number of cached items
+
+/**
+ * Clean up expired cache entries and enforce max size
+ */
+function cleanupCache(): void {
+  const now = Date.now();
+  let expiredCount = 0;
+  let sizeAdjusted = false;
+
+  // Clean up expired cache entries
+  for (const [key, value] of commandCache.entries()) {
+    if (now - value.timestamp >= CACHE_TTL) {
+      commandCache.delete(key);
+      expiredCount++;
+    }
+  }
+
+  // If cache is at max size, remove oldest entries until under limit
+  while (commandCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = commandCache.keys().next().value;
+    if (firstKey) {
+      commandCache.delete(firstKey);
+      sizeAdjusted = true;
+    } else {
+      break;
+    }
+  }
+
+  // Log cleanup info if significant cleanup occurred
+  if (expiredCount > 0 || sizeAdjusted) {
+    logger.debug('Cache cleanup performed', {
+      expiredEntries: expiredCount,
+      sizeAdjusted,
+      currentSize: commandCache.size,
+    });
+  }
+}
 
 /**
  * Escape command line arguments to prevent command injection
@@ -23,16 +63,16 @@ export function escapeArgument(arg: unknown): string {
   if (arg === null || arg === undefined) {
     return '';
   }
-  
+
   // Convert to string and escape special characters
   const argStr = String(arg);
-  
-  // If argument contains spaces or special characters, quote it
-  if (/[^\w.,:/=@%-]/.test(argStr)) {
+
+  // If argument contains characters that need escaping, quote it
+  if (/[\\$`!#&'*;<>?[\]^`{|}"]/g.test(argStr) || /\s/.test(argStr)) {
     // Escape quotes, backslashes, and other special characters, then wrap in quotes
     return `"${argStr.replace(/(["\\$`!#&'*;<>?[\]^`{|}])/g, '\\$1')}"`;
   }
-  
+
   return argStr;
 }
 
@@ -43,17 +83,29 @@ export function escapeArgument(arg: unknown): string {
  * @returns Resolved safe path
  */
 export function validateAndResolvePath(inputPath: string, basePath: string): string {
-  // Resolve the input path
-  const resolvedPath = path.resolve(inputPath);
-  
+  // Handle relative paths by joining with base path first
+  let resolvedPath: string;
+  if (path.isAbsolute(inputPath)) {
+    // For absolute paths, resolve as-is
+    resolvedPath = path.resolve(inputPath);
+  } else {
+    // For relative paths, join with base path first to ensure it's within the base directory
+    resolvedPath = path.resolve(basePath, inputPath);
+  }
+
   // Resolve the base path
   const resolvedBasePath = path.resolve(basePath);
-  
+
   // Check if the resolved path is within the base path
   if (!resolvedPath.startsWith(resolvedBasePath)) {
-    throw new AppError(`Path traversal attempt detected: ${inputPath}`, 400, false, 'PATH_TRAVERSAL');
+    throw new AppError(
+      `Path traversal attempt detected: ${inputPath}`,
+      400,
+      false,
+      'PATH_TRAVERSAL'
+    );
   }
-  
+
   return resolvedPath;
 }
 
@@ -69,12 +121,12 @@ export async function executeCommand(
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   const useCache = options.useCache !== false; // Default to true
   const cacheKey = useCache ? `${command}:${options.cwd || ''}` : '';
-  
+
   // Check cache if caching is enabled
   if (useCache && commandCache.has(cacheKey)) {
     const cached = commandCache.get(cacheKey)!;
     const now = Date.now();
-    
+
     // Check if cache is still valid
     if (now - cached.timestamp < CACHE_TTL) {
       logger.debug('Returning cached result for command', { command });
@@ -102,26 +154,13 @@ export async function executeCommand(
     // Cache the result if caching is enabled
     if (useCache) {
       // Clean up expired cache entries and enforce max size
-      const now = Date.now();
-      for (const [key, value] of commandCache.entries()) {
-        if (now - value.timestamp >= CACHE_TTL) {
-          commandCache.delete(key);
-        }
-      }
-      
-      // If cache is at max size, remove the oldest entry
-      if (commandCache.size >= MAX_CACHE_SIZE) {
-        const firstKey = commandCache.keys().next().value;
-        if (firstKey) {
-          commandCache.delete(firstKey);
-        }
-      }
-      
+      cleanupCache();
+
       commandCache.set(cacheKey, {
         stdout: result.stdout,
         stderr: result.stderr,
         code: 0,
-        timestamp: now,
+        timestamp: Date.now(),
       });
     }
 
@@ -141,28 +180,14 @@ export async function executeCommand(
 
     // Cache error results as well (but for shorter time)
     if (useCache) {
-      const now = Date.now();
-      
       // Clean up expired cache entries and enforce max size
-      for (const [key, value] of commandCache.entries()) {
-        if (now - value.timestamp >= CACHE_TTL) {
-          commandCache.delete(key);
-        }
-      }
-      
-      // If cache is at max size, remove the oldest entry
-      if (commandCache.size >= MAX_CACHE_SIZE) {
-        const firstKey = commandCache.keys().next().value;
-        if (firstKey) {
-          commandCache.delete(firstKey);
-        }
-      }
-      
+      cleanupCache();
+
       commandCache.set(cacheKey, {
         stdout: execError.stdout || '',
         stderr: execError.stderr || (error instanceof Error ? error.message : ''),
         code: execError.code || 1,
-        timestamp: now,
+        timestamp: Date.now(),
       });
     }
 
@@ -195,7 +220,7 @@ export async function executeOpenStudioCommand(
 
   // Properly escape arguments to prevent command injection
   const escapedArgs = args.map(arg => escapeArgument(arg));
-  
+
   const command = [openStudioBin, ...escapedArgs].join(' ');
   return executeCommand(command, { ...options, useCache: options.useCache });
 }
@@ -339,7 +364,15 @@ export async function validateModelASHRAE(params: {
   }
 
   // Run validation command
-  const args = ['validate_model', '--model', safeModelPath, '--standard', standard, '--format', 'json'];
+  const args = [
+    'validate_model',
+    '--model',
+    safeModelPath,
+    '--standard',
+    standard,
+    '--format',
+    'json',
+  ];
 
   const result = await executeOpenStudioCommand(args, { useCache: true }); // Cache validation results
 
