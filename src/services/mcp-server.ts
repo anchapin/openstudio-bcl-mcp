@@ -12,8 +12,9 @@ import {
   runEnergySimulation,
   validateModelASHRAE,
   exportToRadiance,
-  getSimulationResults
+  getSimulationResults,
 } from '../utils/exec';
+import { parseBuildingDescription, validateBuildingParameters } from '../utils/nlp';
 
 /**
  * MCP Server implementation for OpenStudio
@@ -45,8 +46,24 @@ export class OpenStudioMCPServer {
       return {
         tools: [
           {
+            name: 'create_energy_model_nlp',
+            description:
+              'Create a new OpenStudio energy model from natural language description with automatic parameter extraction',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                description: {
+                  type: 'string',
+                  description:
+                    'Natural language description of the building (e.g., "A 10,000 square foot office building in New York")',
+                },
+              },
+              required: ['description'],
+            },
+          },
+          {
             name: 'create_energy_model',
-            description: 'Create a new OpenStudio energy model from natural language description',
+            description: 'Create a new OpenStudio energy model from structured parameters',
             inputSchema: {
               type: 'object',
               properties: {
@@ -166,6 +183,8 @@ export class OpenStudioMCPServer {
 
       try {
         switch (name) {
+          case 'create_energy_model_nlp':
+            return await this.handleCreateEnergyModelNLP(toolArgs);
           case 'create_energy_model':
             return await this.handleCreateEnergyModel(toolArgs);
           case 'run_energy_simulation':
@@ -202,7 +221,7 @@ export class OpenStudioMCPServer {
         location: args.location as string,
         floorArea: args.floorArea as number,
         description: args.description as string,
-        outputPath
+        outputPath,
       });
 
       return {
@@ -236,7 +255,7 @@ export class OpenStudioMCPServer {
       const result = await runEnergySimulation({
         modelPath,
         weatherPath: args.weatherFile as string | undefined,
-        outputDir
+        outputDir,
       });
 
       return {
@@ -266,7 +285,7 @@ export class OpenStudioMCPServer {
 
       const result = await validateModelASHRAE({
         modelPath,
-        standard: args.standard as string
+        standard: args.standard as string,
       });
 
       return {
@@ -300,7 +319,7 @@ export class OpenStudioMCPServer {
         modelPath,
         outputPath,
         includeWindows: args.includeWindows as boolean | undefined,
-        materialProperties: args.materialProperties as boolean | undefined
+        materialProperties: args.materialProperties as boolean | undefined,
       });
 
       return {
@@ -332,7 +351,7 @@ export class OpenStudioMCPServer {
       const result = await getSimulationResults({
         jobId,
         format,
-        resultsDir
+        resultsDir,
       });
 
       return {
@@ -344,7 +363,69 @@ export class OpenStudioMCPServer {
         ],
       };
     } catch (error) {
-      logger.error('Error retrieving simulation results', error instanceof Error ? error : undefined);
+      logger.error(
+        'Error retrieving simulation results',
+        error instanceof Error ? error : undefined
+      );
+      throw error;
+    }
+  }
+
+  private async handleCreateEnergyModelNLP(
+    args: Record<string, unknown>
+  ): Promise<{ content: Array<{ type: string; text: string }> }> {
+    logger.info('Creating energy model from natural language', { args });
+
+    try {
+      // Validate that description is provided
+      if (!args.description || typeof args.description !== 'string') {
+        throw new Error('Description is required for natural language processing');
+      }
+
+      // Parse the natural language description into structured parameters
+      const parsedParams = parseBuildingDescription(args.description as string);
+
+      // Validate the parsed parameters
+      const validation = validateBuildingParameters(parsedParams);
+      if (!validation.isValid) {
+        throw new Error(
+          `Invalid parameters parsed from description: ${validation.errors.join(', ')}`
+        );
+      }
+
+      // Get paths from environment or use defaults
+      const modelsPath = process.env.MODELS_PATH || './data/models';
+      const modelId = `model_${Date.now()}`;
+      const outputPath = `${modelsPath}/${modelId}.osm`;
+
+      const result = await createOpenStudioModel({
+        buildingType: parsedParams.buildingType,
+        location: parsedParams.location,
+        floorArea: parsedParams.floorArea,
+        description: parsedParams.description,
+        outputPath,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Created energy model with ID: ${result.modelId}
+Building Type: ${parsedParams.buildingType}
+Location: ${parsedParams.location}
+Floor Area: ${parsedParams.floorArea} m²
+Description: ${parsedParams.description}
+Output Path: ${result.path}
+
+Model is ready for simulation.`,
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error(
+        'Error creating energy model from natural language',
+        error instanceof Error ? error : undefined
+      );
       throw error;
     }
   }

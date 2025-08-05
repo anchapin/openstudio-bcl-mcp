@@ -29,8 +29,24 @@ router.get('/tools', async (req: Request, res: Response) => {
     // For now, we'll return the static list of tools
     const tools = [
       {
+        name: 'create_energy_model_nlp',
+        description:
+          'Create a new OpenStudio energy model from natural language description with automatic parameter extraction',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            description: {
+              type: 'string',
+              description:
+                'Natural language description of the building (e.g., "A 10,000 square foot office building in New York")',
+            },
+          },
+          required: ['description'],
+        },
+      },
+      {
         name: 'create_energy_model',
-        description: 'Create a new OpenStudio energy model from natural language description',
+        description: 'Create a new OpenStudio energy model from structured parameters',
         inputSchema: {
           type: 'object',
           properties: {
@@ -172,6 +188,7 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
 
     // Validate tool exists
     const validTools = [
+      'create_energy_model_nlp',
       'create_energy_model',
       'run_energy_simulation',
       'validate_model_ashrae',
@@ -186,6 +203,15 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
     // Execute the tool using the MCP server's internal handler
     let result: { content: Array<{ type: string; text: string }> };
     switch (toolName) {
+      case 'create_energy_model_nlp':
+        result = await (
+          mcpServer as unknown as {
+            handleCreateEnergyModelNLP: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleCreateEnergyModelNLP(toolArgs);
+        break;
       case 'create_energy_model':
         result = await (
           mcpServer as unknown as {
@@ -329,8 +355,13 @@ async function handleToolsList(): Promise<{ tools: Array<{ name: string; descrip
   return {
     tools: [
       {
+        name: 'create_energy_model_nlp',
+        description:
+          'Create a new OpenStudio energy model from natural language description with automatic parameter extraction',
+      },
+      {
         name: 'create_energy_model',
-        description: 'Create a new OpenStudio energy model from natural language description',
+        description: 'Create a new OpenStudio energy model from structured parameters',
       },
       {
         name: 'run_energy_simulation',
@@ -360,6 +391,14 @@ async function handleToolCall(
   args: Record<string, unknown>
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (toolName) {
+    case 'create_energy_model_nlp':
+      return await (
+        mcpServer as unknown as {
+          handleCreateEnergyModelNLP: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleCreateEnergyModelNLP(args);
     case 'create_energy_model':
       return await (
         mcpServer as unknown as {
