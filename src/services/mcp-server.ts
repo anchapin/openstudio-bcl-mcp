@@ -62,6 +62,38 @@ export class OpenStudioMCPServer {
             },
           },
           {
+            name: 'complete_energy_model_workflow',
+            description:
+              'Complete energy modeling workflow: create model from natural language, validate against ASHRAE standards, and export to Radiance',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                description: {
+                  type: 'string',
+                  description:
+                    'Natural language description of the building (e.g., "A 10,000 square foot office building in New York")',
+                },
+                ashraeStandard: {
+                  type: 'string',
+                  enum: ['ASHRAE 90.1-2019', 'ASHRAE 90.1-2016', 'ASHRAE 90.1-2013'],
+                  description: 'ASHRAE standard version to validate against',
+                  default: 'ASHRAE 90.1-2019',
+                },
+                exportWindows: {
+                  type: 'boolean',
+                  description: 'Include window surfaces in Radiance export',
+                  default: true,
+                },
+                exportMaterials: {
+                  type: 'boolean',
+                  description: 'Include material optical properties in Radiance export',
+                  default: true,
+                },
+              },
+              required: ['description'],
+            },
+          },
+          {
             name: 'create_energy_model',
             description: 'Create a new OpenStudio energy model from structured parameters',
             inputSchema: {
@@ -183,6 +215,8 @@ export class OpenStudioMCPServer {
 
       try {
         switch (name) {
+          case 'complete_energy_model_workflow':
+            return await this.handleCompleteEnergyModelWorkflow(toolArgs);
           case 'create_energy_model_nlp':
             return await this.handleCreateEnergyModelNLP(toolArgs);
           case 'create_energy_model':
@@ -365,6 +399,92 @@ export class OpenStudioMCPServer {
     } catch (error) {
       logger.error(
         'Error retrieving simulation results',
+        error instanceof Error ? error : undefined
+      );
+      throw error;
+    }
+  }
+
+  private async handleCompleteEnergyModelWorkflow(
+    args: Record<string, unknown>
+  ): Promise<{ content: Array<{ type: string; text: string }> }> {
+    logger.info('Executing complete energy model workflow', { args });
+
+    try {
+      // Validate that description is provided
+      if (!args.description || typeof args.description !== 'string') {
+        throw new Error('Description is required for the energy model workflow');
+      }
+
+      // Step 1: Create energy model from natural language
+      const createModelResult = await this.handleCreateEnergyModelNLP({
+        description: args.description,
+      });
+
+      // Extract model ID from the result
+      const modelIdMatch = createModelResult.content[0].text.match(
+        /Created energy model with ID: ([^\n]+)/
+      );
+      if (!modelIdMatch || modelIdMatch.length < 2) {
+        throw new Error('Failed to extract model ID from creation result');
+      }
+
+      const modelId = modelIdMatch[1].trim();
+      logger.info('Created energy model', { modelId });
+
+      // Step 2: Validate model against ASHRAE standards
+      const ashraeStandard = (args.ashraeStandard as string) || 'ASHRAE 90.1-2019';
+      const validateResult = await this.handleValidateModelAshrae({
+        modelId,
+        standard: ashraeStandard,
+      });
+
+      // Extract validation result
+      const validationMatch = validateResult.content[0].text.match(
+        /Model (meets|does not meet) ([^\n]+)/
+      );
+      const isCompliant = validationMatch && validationMatch[1] === 'meets';
+      logger.info('Validated energy model', { modelId, isCompliant });
+
+      // Step 3: Export to Radiance
+      const exportWindows =
+        args.exportWindows !== undefined ? (args.exportWindows as boolean) : true;
+      const exportMaterials =
+        args.exportMaterials !== undefined ? (args.exportMaterials as boolean) : true;
+
+      const exportResult = await this.handleExportToRadiance({
+        modelId,
+        includeWindows: exportWindows,
+        materialProperties: exportMaterials,
+      });
+
+      // Extract export path
+      const exportPathMatch = exportResult.content[0].text.match(/Export path: ([^\n]+)/);
+      const exportPath = exportPathMatch ? exportPathMatch[1].trim() : 'unknown';
+      logger.info('Exported energy model to Radiance', { modelId, exportPath });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Complete Energy Modeling Workflow Results:
+            
+1. Model Creation:
+${createModelResult.content[0].text}
+
+2. ASHRAE Validation:
+${validateResult.content[0].text}
+
+3. Radiance Export:
+${exportResult.content[0].text}
+
+Workflow completed successfully!`,
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error(
+        'Error executing complete energy model workflow',
         error instanceof Error ? error : undefined
       );
       throw error;

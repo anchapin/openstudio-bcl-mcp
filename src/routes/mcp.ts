@@ -45,6 +45,38 @@ router.get('/tools', async (req: Request, res: Response) => {
         },
       },
       {
+        name: 'complete_energy_model_workflow',
+        description:
+          'Complete energy modeling workflow: create model from natural language, validate against ASHRAE standards, and export to Radiance',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            description: {
+              type: 'string',
+              description:
+                'Natural language description of the building (e.g., "A 10,000 square foot office building in New York")',
+            },
+            ashraeStandard: {
+              type: 'string',
+              enum: ['ASHRAE 90.1-2019', 'ASHRAE 90.1-2016', 'ASHRAE 90.1-2013'],
+              description: 'ASHRAE standard version to validate against',
+              default: 'ASHRAE 90.1-2019',
+            },
+            exportWindows: {
+              type: 'boolean',
+              description: 'Include window surfaces in Radiance export',
+              default: true,
+            },
+            exportMaterials: {
+              type: 'boolean',
+              description: 'Include material optical properties in Radiance export',
+              default: true,
+            },
+          },
+          required: ['description'],
+        },
+      },
+      {
         name: 'create_energy_model',
         description: 'Create a new OpenStudio energy model from structured parameters',
         inputSchema: {
@@ -188,6 +220,7 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
 
     // Validate tool exists
     const validTools = [
+      'complete_energy_model_workflow',
       'create_energy_model_nlp',
       'create_energy_model',
       'run_energy_simulation',
@@ -203,6 +236,15 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
     // Execute the tool using the MCP server's internal handler
     let result: { content: Array<{ type: string; text: string }> };
     switch (toolName) {
+      case 'complete_energy_model_workflow':
+        result = await (
+          mcpServer as unknown as {
+            handleCompleteEnergyModelWorkflow: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleCompleteEnergyModelWorkflow(toolArgs);
+        break;
       case 'create_energy_model_nlp':
         result = await (
           mcpServer as unknown as {
@@ -355,6 +397,11 @@ async function handleToolsList(): Promise<{ tools: Array<{ name: string; descrip
   return {
     tools: [
       {
+        name: 'complete_energy_model_workflow',
+        description:
+          'Complete energy modeling workflow: create model from natural language, validate against ASHRAE standards, and export to Radiance',
+      },
+      {
         name: 'create_energy_model_nlp',
         description:
           'Create a new OpenStudio energy model from natural language description with automatic parameter extraction',
@@ -391,6 +438,14 @@ async function handleToolCall(
   args: Record<string, unknown>
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (toolName) {
+    case 'complete_energy_model_workflow':
+      return await (
+        mcpServer as unknown as {
+          handleCompleteEnergyModelWorkflow: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleCompleteEnergyModelWorkflow(args);
     case 'create_energy_model_nlp':
       return await (
         mcpServer as unknown as {

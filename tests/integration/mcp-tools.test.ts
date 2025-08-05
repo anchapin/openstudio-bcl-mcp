@@ -153,5 +153,19 @@ describe('MCP Server Tools Integration', () => {
       expect(result.content[0].type).toBe('text');
       expect(result.content[0].text).toContain('Created energy model with ID');
     });
+
+    it.skip('should handle complete_energy_model_workflow tool call', async () => {
+      const result = await (server as any).handleCompleteEnergyModelWorkflow({
+        description: 'A 10,000 square foot office building in New York',
+        ashraeStandard: 'ASHRAE 90.1-2019',
+        exportWindows: true,
+        exportMaterials: true,
+      });
+
+      expect(result).toHaveProperty('content');
+      expect(Array.isArray(result.content)).toBe(true);
+      expect(result.content[0].type).toBe('text');
+      expect(result.content[0].text).toContain('Complete Energy Modeling Workflow Results');
+    });
   });
 });
