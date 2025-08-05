@@ -8,6 +8,107 @@ import { ensureDirectory } from './index';
 
 const execPromise = promisify(exec);
 
+// Simple in-memory cache for CLI command results
+const commandCache = new Map<
+  string,
+  { stdout: string; stderr: string; code: number | null; timestamp: number }
+>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
+const MAX_CACHE_SIZE = 100; // Maximum number of cached items
+
+/**
+ * Clean up expired cache entries and enforce max size
+ */
+function cleanupCache(): void {
+  const now = Date.now();
+  let expiredCount = 0;
+  let sizeAdjusted = false;
+
+  // Clean up expired cache entries
+  for (const [key, value] of commandCache.entries()) {
+    if (now - value.timestamp >= CACHE_TTL) {
+      commandCache.delete(key);
+      expiredCount++;
+    }
+  }
+
+  // If cache is at max size, remove oldest entries until under limit
+  while (commandCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = commandCache.keys().next().value;
+    if (firstKey) {
+      commandCache.delete(firstKey);
+      sizeAdjusted = true;
+    } else {
+      break;
+    }
+  }
+
+  // Log cleanup info if significant cleanup occurred
+  if (expiredCount > 0 || sizeAdjusted) {
+    logger.debug('Cache cleanup performed', {
+      expiredEntries: expiredCount,
+      sizeAdjusted,
+      currentSize: commandCache.size,
+    });
+  }
+}
+
+/**
+ * Escape command line arguments to prevent command injection
+ * @param arg - Argument to escape
+ * @returns Escaped argument
+ */
+export function escapeArgument(arg: unknown): string {
+  // Handle null/undefined values
+  if (arg === null || arg === undefined) {
+    return '';
+  }
+
+  // Convert to string and escape special characters
+  const argStr = String(arg);
+
+  // If argument contains characters that need escaping, quote it
+  if (/[\\$`!#&'*;<>?[\]^`{|}"]/g.test(argStr) || /\s/.test(argStr)) {
+    // Escape quotes, backslashes, and other special characters, then wrap in quotes
+    return `"${argStr.replace(/(["\\$`!#&'*;<>?[\]^`{|}])/g, '\\$1')}"`;
+  }
+
+  return argStr;
+}
+
+/**
+ * Validate and resolve a path to prevent directory traversal attacks
+ * @param inputPath - Path to validate
+ * @param basePath - Base directory that paths must be within
+ * @returns Resolved safe path
+ */
+export function validateAndResolvePath(inputPath: string, basePath: string): string {
+  // Handle relative paths by joining with base path first
+  let resolvedPath: string;
+  if (path.isAbsolute(inputPath)) {
+    // For absolute paths, resolve as-is
+    resolvedPath = path.resolve(inputPath);
+  } else {
+    // For relative paths, join with base path first to ensure it's within the base directory
+    resolvedPath = path.resolve(basePath, inputPath);
+  }
+
+  // Resolve the base path
+  const resolvedBasePath = path.resolve(basePath);
+
+  // Check if the resolved path is within the base path
+  if (!resolvedPath.startsWith(resolvedBasePath)) {
+    throw new AppError(
+      `Path traversal attempt detected: ${inputPath}`,
+      400,
+      false,
+      'PATH_TRAVERSAL'
+    );
+  }
+
+  return resolvedPath;
+}
+
 /**
  * Execute a command and return the result
  * @param command - Command to execute
@@ -16,17 +117,52 @@ const execPromise = promisify(exec);
  */
 export async function executeCommand(
   command: string,
-  options: { cwd?: string; timeout?: number } = {}
+  options: { cwd?: string; timeout?: number; useCache?: boolean } = {}
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  const useCache = options.useCache !== false; // Default to true
+  const cacheKey = useCache ? `${command}:${options.cwd || ''}` : '';
+
+  // Check cache if caching is enabled
+  if (useCache && commandCache.has(cacheKey)) {
+    const cached = commandCache.get(cacheKey)!;
+    const now = Date.now();
+
+    // Check if cache is still valid
+    if (now - cached.timestamp < CACHE_TTL) {
+      logger.debug('Returning cached result for command', { command });
+      return {
+        stdout: cached.stdout,
+        stderr: cached.stderr,
+        code: cached.code,
+      };
+    } else {
+      // Remove expired cache entry
+      commandCache.delete(cacheKey);
+    }
+  }
+
   logger.debug('Executing command', { command, options });
 
   try {
-    const timeout = options.timeout || 300000; // 5 minutes default timeout
+    const timeout = options.timeout || parseInt(process.env.TIMEOUT_DEFAULT || '300000', 10); // Configurable timeout
     const result = await execPromise(command, {
       cwd: options.cwd,
       timeout,
       maxBuffer: 1024 * 1024 * 10, // 10MB buffer
     });
+
+    // Cache the result if caching is enabled
+    if (useCache) {
+      // Clean up expired cache entries and enforce max size
+      cleanupCache();
+
+      commandCache.set(cacheKey, {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        code: 0,
+        timestamp: Date.now(),
+      });
+    }
 
     return {
       stdout: result.stdout,
@@ -41,6 +177,19 @@ export async function executeCommand(
       stderr: execError.stderr || '',
       code: execError.code || 1,
     });
+
+    // Cache error results as well (but for shorter time)
+    if (useCache) {
+      // Clean up expired cache entries and enforce max size
+      cleanupCache();
+
+      commandCache.set(cacheKey, {
+        stdout: execError.stdout || '',
+        stderr: execError.stderr || (error instanceof Error ? error.message : ''),
+        code: execError.code || 1,
+        timestamp: Date.now(),
+      });
+    }
 
     return {
       stdout: execError.stdout || '',
@@ -58,7 +207,7 @@ export async function executeCommand(
  */
 export async function executeOpenStudioCommand(
   args: string[],
-  options: { cwd?: string; timeout?: number } = {}
+  options: { cwd?: string; timeout?: number; useCache?: boolean } = {}
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   // Get OpenStudio path from environment or use default
   const openStudioPath = process.env.OPENSTUDIO_PATH || '/usr/local/openstudio';
@@ -69,8 +218,11 @@ export async function executeOpenStudioCommand(
     await ensureDirectory(options.cwd);
   }
 
-  const command = `${openStudioBin} ${args.join(' ')}`;
-  return executeCommand(command, options);
+  // Properly escape arguments to prevent command injection
+  const escapedArgs = args.map(arg => escapeArgument(arg));
+
+  const command = [openStudioBin, ...escapedArgs].join(' ');
+  return executeCommand(command, { ...options, useCache: options.useCache });
 }
 
 /**
@@ -87,8 +239,12 @@ export async function createOpenStudioModel(params: {
 }): Promise<{ modelId: string; path: string }> {
   const { buildingType, location, floorArea, description, outputPath } = params;
 
+  // Validate output path to prevent directory traversal
+  const modelsPath = process.env.MODELS_PATH || './data/models';
+  const safeOutputPath = validateAndResolvePath(outputPath, modelsPath);
+
   // Ensure output directory exists
-  await ensureDirectory(path.dirname(outputPath));
+  await ensureDirectory(path.dirname(safeOutputPath));
 
   // Create a simple OpenStudio model using CLI
   // In a real implementation, this would use more sophisticated OpenStudio measures
@@ -101,12 +257,12 @@ export async function createOpenStudioModel(params: {
     '--floor-area',
     floorArea.toString(),
     '--description',
-    `"${description}"`,
+    description,
     '--output',
-    outputPath,
+    safeOutputPath,
   ];
 
-  const result = await executeOpenStudioCommand(args);
+  const result = await executeOpenStudioCommand(args, { useCache: false }); // Don't cache model creation
 
   if (result.code !== 0) {
     throw new AppError(
@@ -118,11 +274,11 @@ export async function createOpenStudioModel(params: {
   }
 
   // Extract model ID from output path
-  const modelId = path.basename(outputPath, '.osm');
+  const modelId = path.basename(safeOutputPath, '.osm');
 
   return {
     modelId,
-    path: outputPath,
+    path: safeOutputPath,
   };
 }
 
@@ -140,38 +296,47 @@ export async function runEnergySimulation(params: {
 }): Promise<{ jobId: string; status: string; outputPath: string }> {
   const { modelPath, weatherPath, outputDir } = params;
 
+  // Validate paths to prevent directory traversal
+  const modelsPath = process.env.MODELS_PATH || './data/models';
+  const resultsPath = process.env.RESULTS_PATH || './data/results';
+  const safeModelPath = validateAndResolvePath(modelPath, modelsPath);
+  const safeOutputDir = validateAndResolvePath(outputDir, resultsPath);
+
   // Ensure output directory exists
-  await ensureDirectory(outputDir);
+  await ensureDirectory(safeOutputDir);
 
   // Check if model file exists
   try {
-    await fs.access(modelPath);
+    await fs.access(safeModelPath);
   } catch (error) {
-    throw new NotFoundError('Model file', modelPath);
+    throw new NotFoundError('Model file', safeModelPath);
   }
 
   // Build command arguments
-  const args = ['run_simulation', modelPath];
+  const args = ['run_simulation', safeModelPath];
 
   if (weatherPath) {
-    args.push('--weather-file', weatherPath);
+    // Validate weather path if provided
+    const weatherPathBase = process.env.WEATHER_PATH || './data/weather';
+    const safeWeatherPath = validateAndResolvePath(weatherPath, weatherPathBase);
+    args.push('--weather-file', safeWeatherPath);
   }
 
-  args.push('--output-directory', outputDir);
+  args.push('--output-directory', safeOutputDir);
 
-  const result = await executeOpenStudioCommand(args, { cwd: outputDir });
+  const result = await executeOpenStudioCommand(args, { cwd: safeOutputDir, useCache: false }); // Don't cache simulations
 
   if (result.code !== 0) {
     throw new AppError(`Energy simulation failed: ${result.stderr}`, 500, true, 'SIMULATION_ERROR');
   }
 
   // Extract job ID from output directory
-  const jobId = path.basename(outputDir);
+  const jobId = path.basename(safeOutputDir);
 
   return {
     jobId,
     status: 'completed',
-    outputPath: outputDir,
+    outputPath: safeOutputDir,
   };
 }
 
@@ -187,17 +352,29 @@ export async function validateModelASHRAE(params: {
 }): Promise<{ compliant: boolean; report: string }> {
   const { modelPath, standard } = params;
 
+  // Validate model path to prevent directory traversal
+  const modelsPath = process.env.MODELS_PATH || './data/models';
+  const safeModelPath = validateAndResolvePath(modelPath, modelsPath);
+
   // Check if model file exists
   try {
-    await fs.access(modelPath);
+    await fs.access(safeModelPath);
   } catch (error) {
-    throw new NotFoundError('Model file', modelPath);
+    throw new NotFoundError('Model file', safeModelPath);
   }
 
   // Run validation command
-  const args = ['validate_model', '--model', modelPath, '--standard', standard, '--format', 'json'];
+  const args = [
+    'validate_model',
+    '--model',
+    safeModelPath,
+    '--standard',
+    standard,
+    '--format',
+    'json',
+  ];
 
-  const result = await executeOpenStudioCommand(args);
+  const result = await executeOpenStudioCommand(args, { useCache: true }); // Cache validation results
 
   if (result.code !== 0) {
     throw new AppError(`Model validation failed: ${result.stderr}`, 500, true, 'VALIDATION_ERROR');
@@ -228,18 +405,24 @@ export async function exportToRadiance(params: {
 }): Promise<{ exported: boolean; path: string }> {
   const { modelPath, outputPath, includeWindows = true, materialProperties = true } = params;
 
+  // Validate paths to prevent directory traversal
+  const modelsPath = process.env.MODELS_PATH || './data/models';
+  const resultsPath = process.env.RESULTS_PATH || './data/results';
+  const safeModelPath = validateAndResolvePath(modelPath, modelsPath);
+  const safeOutputPath = validateAndResolvePath(outputPath, resultsPath);
+
   // Check if model file exists
   try {
-    await fs.access(modelPath);
+    await fs.access(safeModelPath);
   } catch (error) {
-    throw new NotFoundError('Model file', modelPath);
+    throw new NotFoundError('Model file', safeModelPath);
   }
 
   // Ensure output directory exists
-  await ensureDirectory(path.dirname(outputPath));
+  await ensureDirectory(path.dirname(safeOutputPath));
 
   // Build export command
-  const args = ['export_radiance', modelPath, '--output', outputPath];
+  const args = ['export_radiance', safeModelPath, '--output', safeOutputPath];
 
   if (includeWindows) {
     args.push('--include-windows');
@@ -249,7 +432,7 @@ export async function exportToRadiance(params: {
     args.push('--include-materials');
   }
 
-  const result = await executeOpenStudioCommand(args);
+  const result = await executeOpenStudioCommand(args, { useCache: false }); // Don't cache exports
 
   if (result.code !== 0) {
     throw new AppError(`Radiance export failed: ${result.stderr}`, 500, true, 'EXPORT_ERROR');
@@ -257,7 +440,7 @@ export async function exportToRadiance(params: {
 
   return {
     exported: true,
-    path: outputPath,
+    path: safeOutputPath,
   };
 }
 
@@ -275,27 +458,31 @@ export async function getSimulationResults(params: {
 }): Promise<{ content: string; format: string }> {
   const { jobId: _jobId, format, resultsDir } = params;
 
+  // Validate results directory path to prevent directory traversal
+  const resultsPath = process.env.RESULTS_PATH || './data/results';
+  const safeResultsDir = validateAndResolvePath(resultsDir, resultsPath);
+
   // Check if results directory exists
   try {
-    await fs.access(resultsDir);
+    await fs.access(safeResultsDir);
   } catch (error) {
-    throw new NotFoundError('Results directory', resultsDir);
+    throw new NotFoundError('Results directory', safeResultsDir);
   }
 
   // Determine result file based on format
   let resultFile: string;
   switch (format.toLowerCase()) {
     case 'json':
-      resultFile = path.join(resultsDir, 'results.json');
+      resultFile = path.join(safeResultsDir, 'results.json');
       break;
     case 'csv':
-      resultFile = path.join(resultsDir, 'results.csv');
+      resultFile = path.join(safeResultsDir, 'results.csv');
       break;
     case 'html':
-      resultFile = path.join(resultsDir, 'results.html');
+      resultFile = path.join(safeResultsDir, 'results.html');
       break;
     default:
-      resultFile = path.join(resultsDir, 'results.json');
+      resultFile = path.join(safeResultsDir, 'results.json');
   }
 
   // Check if result file exists
