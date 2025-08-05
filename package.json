@@ -1,0 +1,112 @@
+{
+  "name": "openstudio-mcp-server",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for OpenStudio building energy modeling tools",
+  "keywords": [
+    "mcp",
+    "openstudio",
+    "energy-modeling",
+    "building-simulation",
+    "typescript",
+    "ai-tools"
+  ],
+  "author": "OpenStudio MCP Team",
+  "license": "MIT",
+  "homepage": "https://github.com/anchapin/openstudio-bcl-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anchapin/openstudio-bcl-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anchapin/openstudio-bcl-mcp/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "clean": "rimraf dist",
+    "prebuild": "npm run clean",
+    "postbuild": "npm run copy-assets",
+    "copy-assets": "copyfiles -u 1 \"src/**/*.json\" \"src/**/*.yaml\" \"src/**/*.yml\" dist/",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,json,md}\"",
+    "type-check": "tsc --noEmit",
+    "validate": "npm run type-check && npm run lint && npm run test",
+    "package:all": "npm run build && npm run package:win && npm run package:mac && npm run package:linux",
+    "package:win": "pkg dist/index.js --targets node18-win-x64 --output dist/openstudio-mcp-server-win.exe",
+    "package:mac": "pkg dist/index.js --targets node18-macos-x64 --output dist/openstudio-mcp-server-macos",
+    "package:linux": "pkg dist/index.js --targets node18-linux-x64 --output dist/openstudio-mcp-server-linux",
+    "docker:build": "docker build -t openstudio-mcp-server .",
+    "docker:run": "docker run -p 3000:3000 openstudio-mcp-server",
+    "docs:generate": "typedoc src/index.ts",
+    "prepare": "husky install"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "joi": "^17.11.0",
+    "rate-limiter-flexible": "^5.0.3",
+    "socket.io": "^4.7.4",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "ws": "^8.16.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.7.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.6",
+    "@types/uuid": "^9.0.7",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "@vitest/coverage-v8": "^1.1.3",
+    "@vitest/ui": "^1.1.3",
+    "copyfiles": "^2.4.1",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-security": "^1.7.1",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.0",
+    "pkg": "^5.8.1",
+    "prettier": "^3.1.1",
+    "rimraf": "^5.0.5",
+    "tsx": "^4.6.2",
+    "typedoc": "^0.25.7",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  }
+}
