@@ -29,8 +29,56 @@ router.get('/tools', async (req: Request, res: Response) => {
     // For now, we'll return the static list of tools
     const tools = [
       {
+        name: 'create_energy_model_nlp',
+        description:
+          'Create a new OpenStudio energy model from natural language description with automatic parameter extraction',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            description: {
+              type: 'string',
+              description:
+                'Natural language description of the building (e.g., "A 10,000 square foot office building in New York")',
+            },
+          },
+          required: ['description'],
+        },
+      },
+      {
+        name: 'complete_energy_model_workflow',
+        description:
+          'Complete energy modeling workflow: create model from natural language, validate against ASHRAE standards, and export to Radiance',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            description: {
+              type: 'string',
+              description:
+                'Natural language description of the building (e.g., "A 10,000 square foot office building in New York")',
+            },
+            ashraeStandard: {
+              type: 'string',
+              enum: ['ASHRAE 90.1-2019', 'ASHRAE 90.1-2016', 'ASHRAE 90.1-2013'],
+              description: 'ASHRAE standard version to validate against',
+              default: 'ASHRAE 90.1-2019',
+            },
+            exportWindows: {
+              type: 'boolean',
+              description: 'Include window surfaces in Radiance export',
+              default: true,
+            },
+            exportMaterials: {
+              type: 'boolean',
+              description: 'Include material optical properties in Radiance export',
+              default: true,
+            },
+          },
+          required: ['description'],
+        },
+      },
+      {
         name: 'create_energy_model',
-        description: 'Create a new OpenStudio energy model from natural language description',
+        description: 'Create a new OpenStudio energy model from structured parameters',
         inputSchema: {
           type: 'object',
           properties: {
@@ -140,6 +188,145 @@ router.get('/tools', async (req: Request, res: Response) => {
           required: ['jobId'],
         },
       },
+      {
+        name: 'run_daylight_analysis',
+        description: 'Run Radiance daylight analysis on exported building model',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            modelId: {
+              type: 'string',
+              description: 'ID of the energy model to analyze',
+            },
+            analysisType: {
+              type: 'string',
+              enum: ['daylight_factor', 'annual', 'point_in_time'],
+              description: 'Type of daylight analysis to perform',
+              default: 'annual',
+            },
+            skyConditions: {
+              type: 'string',
+              enum: ['overcast', 'clear', 'cie'],
+              description: 'Sky conditions for analysis',
+              default: 'cie',
+            },
+            gridSpacing: {
+              type: 'number',
+              description: 'Grid spacing for analysis in meters',
+              default: 0.5,
+            },
+            weatherFile: {
+              type: 'string',
+              description: 'Path to weather file for annual analysis (optional)',
+            },
+          },
+          required: ['modelId'],
+        },
+      },
+      {
+        name: 'run_hvac_sizing',
+        description: 'Run HVAC system sizing and selection for building model',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            modelId: {
+              type: 'string',
+              description: 'ID of the energy model to size HVAC for',
+            },
+            climateZone: {
+              type: 'string',
+              description: 'Climate zone for HVAC sizing (e.g., ASHRAE 169-2013-5A)',
+              default: 'ASHRAE 169-2013-5A',
+            },
+            buildingType: {
+              type: 'string',
+              description: 'Building type for HVAC sizing',
+              default: 'office',
+            },
+            efficiencyLevel: {
+              type: 'string',
+              enum: ['standard', 'high', 'premium'],
+              description: 'Efficiency level for HVAC equipment selection',
+              default: 'standard',
+            },
+            includeDetailedResults: {
+              type: 'boolean',
+              description: 'Include detailed HVAC sizing results',
+              default: false,
+            },
+          },
+          required: ['modelId'],
+        },
+      },
+      {
+        name: 'run_net_zero_analysis',
+        description: 'Run net-zero energy building analysis and optimization',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            modelId: {
+              type: 'string',
+              description: 'ID of the energy model to analyze for net-zero potential',
+            },
+            optimizationLevel: {
+              type: 'string',
+              enum: ['basic', 'advanced', 'comprehensive'],
+              description: 'Level of optimization to apply',
+              default: 'advanced',
+            },
+            renewableSources: {
+              type: 'array',
+              items: {
+                type: 'string',
+                enum: ['solar', 'wind', 'geothermal'],
+              },
+              description: 'Renewable energy sources to consider',
+              default: ['solar'],
+            },
+            includeEconomicAnalysis: {
+              type: 'boolean',
+              description: 'Include economic analysis of net-zero measures',
+              default: false,
+            },
+            targetYear: {
+              type: 'number',
+              description: 'Target year for net-zero analysis',
+              default: new Date().getFullYear() + 20,
+            },
+          },
+          required: ['modelId'],
+        },
+      },
+      {
+        name: 'validate_model_leed',
+        description: 'Validate an energy model against LEED standards',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            modelId: {
+              type: 'string',
+              description: 'ID of the energy model to validate',
+            },
+            leedVersion: {
+              type: 'string',
+              enum: ['LEED v4.1', 'LEED v4.0', 'LEED 2009'],
+              description: 'LEED version to validate against',
+              default: 'LEED v4.1',
+            },
+            buildingType: {
+              type: 'string',
+              description: 'Building type for LEED validation',
+              default: 'office',
+            },
+            includeDetailedReport: {
+              type: 'boolean',
+              description: 'Include detailed LEED validation report',
+              default: false,
+            },
+          },
+          required: ['modelId'],
+        },
+      },
     ];
 
     res.json({
@@ -172,10 +359,16 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
 
     // Validate tool exists
     const validTools = [
+      'complete_energy_model_workflow',
+      'create_energy_model_nlp',
       'create_energy_model',
       'run_energy_simulation',
       'validate_model_ashrae',
       'export_to_radiance',
+      'run_daylight_analysis',
+      'run_hvac_sizing',
+      'run_net_zero_analysis',
+      'validate_model_leed',
       'get_simulation_results',
     ];
 
@@ -186,6 +379,24 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
     // Execute the tool using the MCP server's internal handler
     let result: { content: Array<{ type: string; text: string }> };
     switch (toolName) {
+      case 'complete_energy_model_workflow':
+        result = await (
+          mcpServer as unknown as {
+            handleCompleteEnergyModelWorkflow: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleCompleteEnergyModelWorkflow(toolArgs);
+        break;
+      case 'create_energy_model_nlp':
+        result = await (
+          mcpServer as unknown as {
+            handleCreateEnergyModelNLP: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleCreateEnergyModelNLP(toolArgs);
+        break;
       case 'create_energy_model':
         result = await (
           mcpServer as unknown as {
@@ -221,6 +432,42 @@ router.post('/tools/:toolName', async (req: Request, res: Response) => {
             ) => Promise<{ content: Array<{ type: string; text: string }> }>;
           }
         ).handleExportToRadiance(toolArgs);
+        break;
+      case 'run_daylight_analysis':
+        result = await (
+          mcpServer as unknown as {
+            handleRunDaylightAnalysis: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleRunDaylightAnalysis(toolArgs);
+        break;
+      case 'run_hvac_sizing':
+        result = await (
+          mcpServer as unknown as {
+            handleRunHVACSizing: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleRunHVACSizing(toolArgs);
+        break;
+      case 'run_net_zero_analysis':
+        result = await (
+          mcpServer as unknown as {
+            handleRunNetZeroAnalysis: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleRunNetZeroAnalysis(toolArgs);
+        break;
+      case 'validate_model_leed':
+        result = await (
+          mcpServer as unknown as {
+            handleValidateModelLEED: (
+              args: Record<string, unknown>
+            ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+          }
+        ).handleValidateModelLEED(toolArgs);
         break;
       case 'get_simulation_results':
         result = await (
@@ -329,8 +576,18 @@ async function handleToolsList(): Promise<{ tools: Array<{ name: string; descrip
   return {
     tools: [
       {
+        name: 'complete_energy_model_workflow',
+        description:
+          'Complete energy modeling workflow: create model from natural language, validate against ASHRAE standards, and export to Radiance',
+      },
+      {
+        name: 'create_energy_model_nlp',
+        description:
+          'Create a new OpenStudio energy model from natural language description with automatic parameter extraction',
+      },
+      {
         name: 'create_energy_model',
-        description: 'Create a new OpenStudio energy model from natural language description',
+        description: 'Create a new OpenStudio energy model from structured parameters',
       },
       {
         name: 'run_energy_simulation',
@@ -348,6 +605,22 @@ async function handleToolsList(): Promise<{ tools: Array<{ name: string; descrip
         name: 'get_simulation_results',
         description: 'Retrieve results from a completed energy simulation',
       },
+      {
+        name: 'run_daylight_analysis',
+        description: 'Run Radiance daylight analysis on exported building model',
+      },
+      {
+        name: 'run_hvac_sizing',
+        description: 'Run HVAC system sizing and selection for building model',
+      },
+      {
+        name: 'run_net_zero_analysis',
+        description: 'Run net-zero energy building analysis and optimization',
+      },
+      {
+        name: 'validate_model_leed',
+        description: 'Validate an energy model against LEED standards',
+      },
     ],
   };
 }
@@ -360,6 +633,22 @@ async function handleToolCall(
   args: Record<string, unknown>
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (toolName) {
+    case 'complete_energy_model_workflow':
+      return await (
+        mcpServer as unknown as {
+          handleCompleteEnergyModelWorkflow: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleCompleteEnergyModelWorkflow(args);
+    case 'create_energy_model_nlp':
+      return await (
+        mcpServer as unknown as {
+          handleCreateEnergyModelNLP: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleCreateEnergyModelNLP(args);
     case 'create_energy_model':
       return await (
         mcpServer as unknown as {
@@ -392,6 +681,38 @@ async function handleToolCall(
           ) => Promise<{ content: Array<{ type: string; text: string }> }>;
         }
       ).handleExportToRadiance(args);
+    case 'run_daylight_analysis':
+      return await (
+        mcpServer as unknown as {
+          handleRunDaylightAnalysis: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleRunDaylightAnalysis(args);
+    case 'run_hvac_sizing':
+      return await (
+        mcpServer as unknown as {
+          handleRunHVACSizing: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleRunHVACSizing(args);
+    case 'run_net_zero_analysis':
+      return await (
+        mcpServer as unknown as {
+          handleRunNetZeroAnalysis: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleRunNetZeroAnalysis(args);
+    case 'validate_model_leed':
+      return await (
+        mcpServer as unknown as {
+          handleValidateModelLEED: (
+            args: Record<string, unknown>
+          ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        }
+      ).handleValidateModelLEED(args);
     case 'get_simulation_results':
       return await (
         mcpServer as unknown as {
